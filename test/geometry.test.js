@@ -75,6 +75,40 @@ test('超大坐标下多边形面积保持正确符号', () => {
   assert.ok(polygonSignedArea(ccw.slice().reverse()) < 0);
 });
 
+test('大幅平移下多边形面积保持正确符号（平移不变）', () => {
+  // 平移基准 1e307、局部跨度 1e292：绝对坐标鞋带和的面积信号（跨度²）远小于
+  // 坐标乘积的舍入误差，曾得到 0 或噪声符号，把有效凸包误判为退化
+  const T = 1e307;
+  const h = 2e292;
+  const ccw = [
+    { x: T - h, y: T - h }, { x: T + h, y: T - h },
+    { x: T + h, y: T + h }, { x: T - h, y: T + h },
+  ];
+  assert.ok(polygonSignedArea(ccw) > 0);
+  assert.ok(polygonSignedArea(ccw.slice().reverse()) < 0);
+});
+
+test('中等平移下多边形面积数值准确（1e12 平移）', () => {
+  // 坐标均为精确可表示的整数，平移后面积应与未平移完全一致
+  const T = 1e12;
+  const ccw = [
+    { x: T - 8, y: T - 8 }, { x: T + 8, y: T - 8 },
+    { x: T + 8, y: T + 8 }, { x: T - 8, y: T + 8 },
+  ];
+  assert.equal(polygonSignedArea(ccw), 256);
+  assert.equal(polygonSignedArea(ccw.slice().reverse()), -256);
+});
+
+test('极小局部尺度下多边形面积保持正确符号与量级', () => {
+  const h = 1e-12;
+  const ccw = [
+    { x: -h, y: -h }, { x: h, y: -h }, { x: h, y: h }, { x: -h, y: h },
+  ];
+  const area = polygonSignedArea(ccw);
+  assert.ok(area > 0);
+  assert.ok(Math.abs(area - 4e-24) <= 4e-24 * 1e-9, `面积应约为 4e-24，got ${area}`);
+});
+
 test('超大坐标下 pointInPolygon 正确识别斜边上的点', () => {
   const d = 1e307;
   const tri = [{ x: -d, y: -d }, { x: d, y: -d }, { x: -d, y: d }];

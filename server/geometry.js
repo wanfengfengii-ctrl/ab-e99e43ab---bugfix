@@ -4,8 +4,8 @@
 //
 // 坐标可以是超大但有限的数值（如 1e307）：坐标之差仍在 double 范围内，
 // 但两个坐标差的乘积会溢出为 Infinity（进而产生 NaN）。凡涉及坐标差乘积的
-// 计算（叉积、面积、投影），这里都采用“先归一化/缩放再相乘”的写法，
-// 保证超大坐标下仍得到有限、符号正确的结果。
+// 计算（叉积、面积、投影），这里都先平移到局部参考系、必要时再归一化/缩放，
+// 保证超大坐标与大幅平移下仍得到有限、符号正确的结果。
 
 export function sub(a, b) {
   return { x: a.x - b.x, y: a.y - b.y };
@@ -62,19 +62,44 @@ export function distanceToSegment(p, a, b) {
 }
 
 export function polygonSignedArea(poly) {
-  let s = 0;
-  for (let i = 0; i < poly.length; i++) {
-    const a = poly[i];
-    const b = poly[(i + 1) % poly.length];
-    s += a.x * b.y - b.x * a.y;
+  if (poly.length === 0) return 0;
+  // 鞋带和对整体平移不变：先减去参考点（首顶点）再累加，参与运算的是
+  // 坐标差（与局部跨度同量级，且相近坐标相减是精确的）。若直接用绝对坐标，
+  // 大平移基准（如整体平移 1e307、局部跨度 1e292）下面积信号会被
+  // 坐标乘积的舍入误差淹没，得到 0 或错误符号，进而把有效凸包误判为退化。
+  const rx = poly[0].x;
+  const ry = poly[0].y;
+  let span = 0;
+  for (const p of poly) {
+    span = Math.max(span, Math.abs(p.x - rx), Math.abs(p.y - ry));
   }
-  if (Number.isFinite(s)) return s / 2;
-  // 坐标乘积溢出（坐标 ~1e307）：按最大坐标缩放后重新累加。此时真实面积
-  // 一般已超出 double 范围，返回值保持正确符号（通常为 ±Infinity），
-  // 调用方（ensureCCW、退化判断）只依赖符号或量级。
+  if (Number.isFinite(span)) {
+    let s = 0;
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i];
+      const b = poly[(i + 1) % poly.length];
+      s += (a.x - rx) * (b.y - ry) - (b.x - rx) * (a.y - ry);
+    }
+    if (Number.isFinite(s)) return s / 2;
+    // 局部跨度的乘积仍溢出（跨度本身 ~1e292 量级）：按跨度缩放后重新累加。
+    // 此时真实面积一般已超出 double 范围，返回值保持正确符号（通常为
+    // ±Infinity），调用方（ensureCCW、退化判断）只依赖符号或量级。
+    if (span > 0) {
+      let scaled = 0;
+      for (let i = 0; i < poly.length; i++) {
+        const a = poly[i];
+        const b = poly[(i + 1) % poly.length];
+        scaled += ((a.x - rx) / span) * ((b.y - ry) / span) - ((b.x - rx) / span) * ((a.y - ry) / span);
+      }
+      return (scaled / 2) * span * span;
+    }
+    return s / 2; // 所有顶点重合：面积为 0
+  }
+  // 坐标差本身溢出（坐标分布在 ±1e308 两端）：退化为按绝对坐标缩放，
+  // 至少保证符号正确。
   let m = 0;
   for (const p of poly) m = Math.max(m, Math.abs(p.x), Math.abs(p.y));
-  if (!(m > 0) || !Number.isFinite(m)) return s / 2;
+  if (!(m > 0) || !Number.isFinite(m)) return 0;
   let scaled = 0;
   for (let i = 0; i < poly.length; i++) {
     const a = poly[i];

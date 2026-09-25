@@ -80,7 +80,11 @@ function buildPayload() {
 }
 
 function fmt(v, d = 4) {
-  return Number(v).toFixed(d).replace(/\.?0+$/, '');
+  const s = Number(v).toFixed(d);
+  // 指数记法（如 2e+292，|v|≥1e21 时 toFixed 的输出）直接返回：
+  // 末尾去零会把指数部分的 0 一并删掉（"2e+300" 被误改为 "2e+3"）
+  if (/[eE]/.test(s)) return s;
+  return s.replace(/\.?0+$/, '');
 }
 
 function clearResults() {

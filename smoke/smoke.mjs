@@ -169,6 +169,50 @@ async function main() {
       `got=${huge.metrics?.minMargin}`
     );
     check('外方形裕量严格大于内方形约 9e306', huge.metrics?.minMargin > 9e306);
+
+    console.log('9) POST /api/fixture-plans 大幅平移坐标场景（1e307 平移 + 1e292 局部跨度）');
+    // 回归：该唯一有效支撑组合曾被误判为 hull_degenerate（minCornerMargin 为 null）。
+    // 四点形成边长约 3.99e292 的方形，标称重心严格位于其中，两偏差均为 0。
+    const shiftedResp = await fetch(`${BASE}/api/fixture-plans`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        rails: [
+          [{ x: 1e307 - 2e292, y: 1e307 - 2e292 }],
+          [{ x: 1e307 + 2e292, y: 1e307 - 2e292 }],
+          [{ x: 1e307 + 2e292, y: 1e307 + 2e292 }],
+          [{ x: 1e307 - 2e292, y: 1e307 + 2e292 }],
+        ],
+        boundary: [
+          { x: 1e307 - 4e292, y: 1e307 - 4e292 }, { x: 1e307 + 4e292, y: 1e307 - 4e292 },
+          { x: 1e307 + 4e292, y: 1e307 + 4e292 }, { x: 1e307 - 4e292, y: 1e307 + 4e292 },
+        ],
+        cg: { x: 1e307, y: 1e307 },
+        toleranceX: 0,
+        toleranceY: 0,
+        minSpacing: 1,
+      }),
+    });
+    check('返回 200', shiftedResp.status === 200, `status=${shiftedResp.status}`);
+    const shifted = await shiftedResp.json();
+    check('feasible=true', shifted.feasible === true, `reason=${shifted.reason}`);
+    check(
+      '四条导轨各自唯一的候选 [1,1,1,1]',
+      JSON.stringify(shifted.selection?.map((s) => s.candidateNumber)) === '[1,1,1,1]',
+      `got=${JSON.stringify(shifted.selection?.map((s) => s.candidateNumber))}`
+    );
+    // 半边长约为 2e292（坐标按 ulp 舍入，容差取 1%）
+    const nearHalfSide = (v) => Number.isFinite(v) && v > 0 && Math.abs(v - 2e292) <= 2e292 * 1e-2;
+    check(
+      '四个角点裕量均为有限正数且约为 2e292',
+      shifted.corners?.length === 4 && shifted.corners.every((c) => nearHalfSide(c.margin)),
+      `got=${JSON.stringify(shifted.corners?.map((c) => c.margin))}`
+    );
+    check(
+      'metrics.minMargin 为有限正数且约为 2e292',
+      nearHalfSide(shifted.metrics?.minMargin),
+      `got=${shifted.metrics?.minMargin}`
+    );
   } catch (err) {
     console.error(`冒烟执行异常：${err.stack || err.message}`);
     failures++;

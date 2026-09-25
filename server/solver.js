@@ -105,12 +105,35 @@ function pairGap(points) {
 }
 
 /**
+ * 组合的几何尺度：选点与偏差角点的坐标跨度（对整体平移不变）。
+ * 用于把“退化 / 严格在内 / 间距”的判定阈值适配到当前组合的量级：
+ * 普通坐标下与绝对 EPS 等效；极小局部尺度（如跨度 1e-12）下不会把
+ * 有效支撑误判为退化或越界；超大坐标下也不会把数值噪声当作裕量。
+ */
+function combinationScale(points, corners) {
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const p of [...points, ...corners]) {
+    minX = Math.min(minX, p.x);
+    maxX = Math.max(maxX, p.x);
+    minY = Math.min(minY, p.y);
+    maxY = Math.max(maxY, p.y);
+  }
+  return Math.max(maxX - minX, maxY - minY);
+}
+
+/**
  * 评估单个组合，返回约束状态与各项指标。
  * stage:
  *   boundary_failed -> spacing_failed -> hull_degenerate -> corners_failed -> feasible
  */
 function evaluate(indices, input, corners) {
   const points = indices.map((idx, r) => input.rails[r][idx]);
+  // 判定阈值随组合尺度缩放：scale 为 0（所有点重合）时阈值也为 0，行为不变
+  const scale = combinationScale(points, corners);
+  const slack = EPS * scale;
 
   const outside = [];
   for (let i = 0; i < points.length; i++) {
@@ -133,7 +156,7 @@ function evaluate(indices, input, corners) {
   }
 
   const { minGap, pair } = pairGap(points);
-  if (minGap + EPS < input.minSpacing) {
+  if (minGap + slack < input.minSpacing) {
     return {
       status: 'spacing_failed',
       stage: 1,
@@ -147,7 +170,11 @@ function evaluate(indices, input, corners) {
 
   const hull = ensureCCW(convexHull(points));
   const area = polygonSignedArea(hull);
-  if (hull.length < 3 || area <= EPS) {
+  // 退化判定看面积的相对量级 area/scale²：直接算 EPS*scale² 会在
+  // scale ≳ 1e158 时溢出为 Infinity（把有效凸包误判为退化），改为顺序相除；
+  // 面积为 Infinity（真实面积超出 double）时比值仍为 Infinity，保持非退化。
+  const areaRatio = scale > 0 ? area / scale / scale : 0;
+  if (hull.length < 3 || !(areaRatio > EPS)) {
     // 退化凸包：用角点到凸包点集/线段的最近距离量化“差多少”
     let worst = 0;
     for (const c of corners) {
@@ -176,7 +203,7 @@ function evaluate(indices, input, corners) {
   }));
   const minCornerMargin = Math.min(...cornerResults.map((c) => c.margin));
 
-  if (minCornerMargin <= EPS) {
+  if (minCornerMargin <= slack) {
     return {
       status: 'corners_failed',
       stage: 3,
@@ -201,6 +228,7 @@ function evaluate(indices, input, corners) {
     minGap,
     minCornerMargin,
     sumDistance,
+    scale,
   };
 }
 
@@ -251,11 +279,17 @@ export function solve(raw) {
             continue;
           }
 
+          if (best === null) {
+            best = result;
+            continue;
+          }
+          // 比较阈值随组合尺度缩放：普通坐标下等效绝对 EPS，
+          // 极小局部尺度下仍能区分裕量与距离和的优劣
+          const tol = EPS * Math.max(result.scale, best.scale);
           if (
-            best === null ||
-            result.minCornerMargin > best.minCornerMargin + EPS ||
-            (Math.abs(result.minCornerMargin - best.minCornerMargin) <= EPS &&
-              result.sumDistance < best.sumDistance - EPS)
+            result.minCornerMargin > best.minCornerMargin + tol ||
+            (Math.abs(result.minCornerMargin - best.minCornerMargin) <= tol &&
+              result.sumDistance < best.sumDistance - tol)
             // minCornerMargin 与距离和均持平时保留先枚举到的（字典序最小）组合
           ) {
             best = result;

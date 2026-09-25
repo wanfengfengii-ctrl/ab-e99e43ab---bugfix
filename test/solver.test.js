@@ -76,6 +76,94 @@ test('第三目标：指标完全相同的并列组合，按候选编号字典�
   assert.equal(r.metrics.indices[0], 0);
 });
 
+test('大幅平移坐标：1e307 平移基准 + 1e292 局部跨度的唯一支撑组合应判可行', () => {
+  // 回归：曾因鞋带面积在绝对坐标下被平移基准的舍入误差淹没（面积为 0/噪声），
+  // 把唯一有效的支撑组合误判为 hull_degenerate、minCornerMargin 序列化为 null。
+  const T = 1e307; // 平移基准
+  const h = 2e292; // 支撑方形半边长（边长约 3.99e292）
+  const B = 4e292; // 批准边界半边长（同一中心、更大的方形）
+  const r = solve({
+    rails: [
+      [{ x: T - h, y: T - h }],
+      [{ x: T + h, y: T - h }],
+      [{ x: T + h, y: T + h }],
+      [{ x: T - h, y: T + h }],
+    ],
+    boundary: [
+      { x: T - B, y: T - B }, { x: T + B, y: T - B },
+      { x: T + B, y: T + B }, { x: T - B, y: T + B },
+    ],
+    cg: { x: T, y: T },
+    toleranceX: 0,
+    toleranceY: 0,
+    minSpacing: 1,
+  });
+  assert.equal(r.feasible, true);
+  assert.equal(r.evaluatedCombinations, 1);
+  // 四条导轨各自唯一的候选
+  assert.deepEqual(r.selection.map((s) => s.candidateNumber), [1, 1, 1, 1]);
+  assert.deepEqual(r.metrics.indices, [0, 0, 0, 0]);
+  // 四个角点裕量与 minMargin 都必须是有限正数且约为 2e292
+  // （坐标按 ulp 舍入，半边长约为 1.996e292，容差取 1%）
+  const nearHalfSide = (v) => Number.isFinite(v) && v > 0 && Math.abs(v - 2e292) <= 2e292 * 1e-2;
+  assert.equal(r.corners.length, 4);
+  for (const c of r.corners) {
+    assert.ok(nearHalfSide(c.margin), `角点 ${c.label} 裕量应为有限正数且约 2e292，got ${c.margin}`);
+  }
+  assert.ok(nearHalfSide(r.metrics.minMargin), `minMargin 应约为 2e292，got ${r.metrics.minMargin}`);
+  // JSON 序列化后裕量不得退化为 null
+  const roundTrip = JSON.parse(JSON.stringify(r));
+  assert.ok(roundTrip.corners.every((c) => typeof c.margin === 'number' && Number.isFinite(c.margin)));
+  assert.equal(typeof roundTrip.metrics.minMargin, 'number');
+});
+
+test('中等平移坐标：整体平移 1e12 不改变可行性判定与候选裁决', () => {
+  // 回归：绝对坐标鞋带和的面积信号（~1e2）被 1e24 量级的坐标乘积舍入淹没，
+  // 平移后面积符号曾完全由噪声决定。这里所有坐标均为精确可表示的整数。
+  const T = 1e12;
+  const shift = (p) => ({ x: p.x + T, y: p.y + T });
+  const base = crossPayload();
+  const r = solve({
+    ...base,
+    rails: base.rails.map((cands) => cands.map(shift)),
+    boundary: base.boundary.map(shift),
+    cg: shift(base.cg),
+  });
+  assert.equal(r.feasible, true);
+  assert.deepEqual(r.metrics.indices, [1, 1, 1, 1]);
+  assert.ok(Math.abs(r.metrics.minMargin - 4 / Math.SQRT2) < 1e-9);
+});
+
+test('极小局部尺度：跨度 1e-12 量级的有效支撑应判可行并裁决出裕量最大者', () => {
+  // 回归：绝对阈值 EPS=1e-9 曾把极小尺度的有效凸包误判为退化（面积 1e-23 <= 1e-9），
+  // 或把正裕量误判为不在内部；阈值应随组合尺度缩放。
+  const inner = 1e-12;
+  const outer = 2e-12;
+  const bound = 1e-11;
+  const r = solve({
+    rails: [
+      [{ x: -inner, y: -inner }, { x: -outer, y: -outer }],
+      [{ x: inner, y: -inner }, { x: outer, y: -outer }],
+      [{ x: inner, y: inner }, { x: outer, y: outer }],
+      [{ x: -inner, y: inner }, { x: -outer, y: outer }],
+    ],
+    boundary: [
+      { x: -bound, y: -bound }, { x: bound, y: -bound },
+      { x: bound, y: bound }, { x: -bound, y: bound },
+    ],
+    cg: { x: 0, y: 0 },
+    toleranceX: 0,
+    toleranceY: 0,
+    minSpacing: 1e-13,
+  });
+  assert.equal(r.feasible, true);
+  // 外方形裕量约 2e-12 严格大于内方形约 1e-12，唯一选择候选编号 [2,2,2,2]
+  assert.deepEqual(r.selection.map((s) => s.candidateNumber), [2, 2, 2, 2]);
+  assert.deepEqual(r.metrics.indices, [1, 1, 1, 1]);
+  assert.ok(Math.abs(r.metrics.minMargin - 2e-12) <= 2e-12 * 1e-9);
+  assert.ok(r.corners.every((c) => c.margin > 0));
+});
+
 test('超大但有限的坐标：唯一选择外方形，全部裕量为有限数值', () => {
   // 坐标 ~1e307：坐标差的乘积超出 double 范围，裁决仍须给出有限、正确的
   // 选点与稳定裕量（回归：曾因此把内方形判为最优，裕量序列化为 null）。
