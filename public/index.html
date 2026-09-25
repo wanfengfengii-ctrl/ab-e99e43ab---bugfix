@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>卫星太阳翼支撑垫选点裁决</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>卫星太阳翼展开试验 · 支撑垫选点裁决</h1>
+    <p class="subtitle">四轨各选一点 · 偏差矩形四角严格位于支撑凸包内 · 完整组合直接裁决</p>
+  </header>
+
+  <main class="layout">
+    <section class="panel form-panel">
+      <h2>试验参数录入</h2>
+
+      <div class="rail-grid" id="railInputs"></div>
+
+      <label class="field">
+        <span>翼板批准边界顶点（每行一个 <code>x,y</code>，按顺序首尾相连）</span>
+        <textarea id="boundary" rows="5"></textarea>
+      </label>
+
+      <div class="field-row">
+        <label class="field">
+          <span>重心标称 X</span>
+          <input type="number" step="any" id="cgX" />
+        </label>
+        <label class="field">
+          <span>重心标称 Y</span>
+          <input type="number" step="any" id="cgY" />
+        </label>
+      </div>
+      <div class="field-row">
+        <label class="field">
+          <span>横向偏差 toleranceX</span>
+          <input type="number" step="any" min="0" id="tolX" />
+        </label>
+        <label class="field">
+          <span>纵向偏差 toleranceY</span>
+          <input type="number" step="any" min="0" id="tolY" />
+        </label>
+        <label class="field">
+          <span>支撑垫最小间距</span>
+          <input type="number" step="any" min="0" id="minSpacing" />
+        </label>
+      </div>
+
+      <div class="actions">
+        <button id="generateBtn" type="button">生成选点方案</button>
+        <button id="resetBtn" type="button" class="ghost">恢复示例数据</button>
+      </div>
+      <div id="formError" class="form-error" hidden></div>
+    </section>
+
+    <section class="panel result-panel">
+      <h2>裁决结果</h2>
+      <div id="resultEmpty" class="placeholder">尚未生成方案。录入参数后点击“生成选点方案”。</div>
+
+      <div id="resultBody" hidden>
+        <div id="statusBanner"></div>
+        <div class="canvas-wrap">
+          <svg id="scene" viewBox="0 0 600 600" role="img" aria-label="支撑方案示意图"></svg>
+        </div>
+
+        <div id="selectionCards" class="cards"></div>
+
+        <div id="metricsBox" class="metrics"></div>
+
+        <h3>偏差矩形四角稳定裕量</h3>
+        <table class="margin-table">
+          <thead>
+            <tr><th>角点</th><th>X</th><th>Y</th><th>到凸包边界最小有符号距离</th><th>判定</th></tr>
+          </thead>
+          <tbody id="cornerRows"></tbody>
+        </table>
+        <p class="note">有符号距离为正表示严格位于凸包内；数值即该角点到最近凸包边的垂直距离（稳定裕量）。</p>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

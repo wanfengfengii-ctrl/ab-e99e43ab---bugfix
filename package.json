@@ -1,0 +1,17 @@
+{
+  "name": "solar-wing-fixture-planner",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "卫星太阳翼展开试验支撑垫选点裁决（四轨穷举 + 凸包稳定裕量）",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node server/server.js",
+    "test": "node --test test/*.test.js",
+    "smoke": "node smoke/smoke.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
