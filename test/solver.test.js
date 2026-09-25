@@ -117,6 +117,80 @@ test('超大但有限的坐标：唯一选择外方形，全部裕量为有限�
   assert.equal(typeof roundTrip.metrics.minMargin, 'number');
 });
 
+test('大幅平移坐标：1e307 平移基准下的唯一有效支撑不被误判为退化', () => {
+  // 回归：鞋带公式在巨型平移项相互抵消下得到 <=0 的噪声面积，唯一可行组合
+  // 曾被误判为 hull_degenerate、minCornerMargin 序列化为 null。
+  const T = 1e307; // 平移基准
+  const h = 2e292; // 支撑方形半边长（四点边长约 3.99e292）
+  const b = 4e292; // 批准边界半边长（同一中心的更大方形）
+  const r = solve({
+    rails: [
+      [{ x: T - h, y: T - h }],
+      [{ x: T + h, y: T - h }],
+      [{ x: T + h, y: T + h }],
+      [{ x: T - h, y: T + h }],
+    ],
+    boundary: [
+      { x: T - b, y: T - b }, { x: T + b, y: T - b },
+      { x: T + b, y: T + b }, { x: T - b, y: T + b },
+    ],
+    cg: { x: T, y: T },
+    toleranceX: 0,
+    toleranceY: 0,
+    minSpacing: 1,
+  });
+  assert.equal(r.feasible, true);
+  assert.equal(r.evaluatedCombinations, 1);
+  // 四条导轨各自唯一的候选（编号 [1,1,1,1]）
+  assert.deepEqual(r.selection.map((s) => s.candidateNumber), [1, 1, 1, 1]);
+  assert.deepEqual(r.metrics.indices, [0, 0, 0, 0]);
+  // 四个角点裕量与 minMargin 均为有限正数，约为半边长 2e292
+  const nearHalfSide = (v) => Number.isFinite(v) && Math.abs(v - 2e292) <= 2e292 * 1e-2;
+  assert.equal(r.corners.length, 4);
+  for (const c of r.corners) {
+    assert.ok(nearHalfSide(c.margin), `角点 ${c.label} 裕量应约为 2e292，got ${c.margin}`);
+  }
+  assert.ok(nearHalfSide(r.metrics.minMargin), `minMargin 应约为 2e292，got ${r.metrics.minMargin}`);
+  // JSON 序列化后裕量不得退化为 null
+  const roundTrip = JSON.parse(JSON.stringify(r));
+  assert.ok(roundTrip.corners.every((c) => typeof c.margin === 'number' && Number.isFinite(c.margin)));
+  assert.equal(typeof roundTrip.metrics.minMargin, 'number');
+});
+
+test('极小局部尺度：~1e-300 量级的唯一有效支撑不被误判为退化', () => {
+  // 回归：坐标差乘积直接下溢为 0 时，凸包转向判断与面积计算会退化为
+  // “共线”，唯一可行组合曾被误判为 hull_degenerate。
+  const h = 2e-300; // 支撑方形半边长
+  const b = 4e-300; // 批准边界半边长
+  const r = solve({
+    rails: [
+      [{ x: -h, y: -h }],
+      [{ x: h, y: -h }],
+      [{ x: h, y: h }],
+      [{ x: -h, y: h }],
+    ],
+    boundary: [
+      { x: -b, y: -b }, { x: b, y: -b },
+      { x: b, y: b }, { x: -b, y: b },
+    ],
+    cg: { x: 0, y: 0 },
+    toleranceX: 0,
+    toleranceY: 0,
+    minSpacing: 1e-301,
+  });
+  assert.equal(r.feasible, true);
+  assert.equal(r.evaluatedCombinations, 1);
+  assert.deepEqual(r.selection.map((s) => s.candidateNumber), [1, 1, 1, 1]);
+  assert.deepEqual(r.metrics.indices, [0, 0, 0, 0]);
+  // 四个角点裕量与 minMargin 均为有限正数，约为半边长 2e-300
+  const nearHalfSide = (v) => Number.isFinite(v) && Math.abs(v - 2e-300) <= 2e-300 * 1e-9;
+  assert.equal(r.corners.length, 4);
+  for (const c of r.corners) {
+    assert.ok(nearHalfSide(c.margin), `角点 ${c.label} 裕量应约为 2e-300，got ${c.margin}`);
+  }
+  assert.ok(nearHalfSide(r.metrics.minMargin), `minMargin 应约为 2e-300，got ${r.metrics.minMargin}`);
+});
+
 test('间距约束：最小间距无法满足时判定不可行并给出间距证据', () => {
   const r = solve(crossPayload({ minSpacing: 100 }));
   assert.equal(r.feasible, false);

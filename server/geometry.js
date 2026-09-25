@@ -6,6 +6,12 @@
 // 但两个坐标差的乘积会溢出为 Infinity（进而产生 NaN）。凡涉及坐标差乘积的
 // 计算（叉积、面积、投影），这里都采用“先归一化/缩放再相乘”的写法，
 // 保证超大坐标下仍得到有限、符号正确的结果。
+//
+// 坐标也可能带巨大的平移基准（如 1e307 平移、1e292 局部跨度）或处于极小
+// 局部尺度（如 1e-300）：前者让面积公式中的平移项相互抵消、吞掉真实面积，
+// 后者让坐标差乘积直接下溢为 0。因此面积计算先平移到首顶点（平移不改变
+// 面积，且坐标差在 double 下精确）再归一化累加；叉积始终按最大分量归一化，
+// 保证任意平移与量级下符号与是否为零的判断都正确。
 
 export function sub(a, b) {
   return { x: a.x - b.x, y: a.y - b.y };
@@ -16,15 +22,14 @@ export function cross(a, b) {
 }
 
 /**
- * 两个差向量的叉积 ux*vy - uy*vx 的溢出安全版本。
- * 常规范围直接计算并原样返回；乘积溢出（坐标差 ~1e307 量级）时按最大分量
- * 缩放后重算，返回值的符号与真实叉积一致，供只需判断转向/是否为零的调用方使用。
+ * 两个差向量的叉积 ux*vy - uy*vx 的溢出/下溢安全版本。
+ * 始终按最大分量归一化后再相乘：坐标差 ~1e307 量级时乘积不会溢出为 Infinity，
+ * ~1e-300 量级时也不会下溢为 0。返回值的符号与是否为零始终和真实叉积一致，
+ * 供只需判断转向/是否为零的调用方使用。
  */
 function crossDiffs(ux, uy, vx, vy) {
-  const c = ux * vy - uy * vx;
-  if (Number.isFinite(c)) return c;
   const m = Math.max(Math.abs(ux), Math.abs(uy), Math.abs(vx), Math.abs(vy));
-  if (!(m > 0) || !Number.isFinite(m)) return c;
+  if (!(m > 0) || !Number.isFinite(m)) return ux * vy - uy * vx;
   return (ux / m) * (vy / m) - (uy / m) * (vx / m);
 }
 
@@ -61,34 +66,55 @@ export function distanceToSegment(p, a, b) {
   return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 }
 
+/**
+ * 归一化鞋带和：先以首顶点为基准平移（平移不改变简单多边形面积，且坐标差在
+ * double 下精确），再按最大跨度归一化后累加。大幅平移（如 1e307 基准 + 1e292
+ * 局部跨度）下平移项不会相互抵消吞掉真实面积；超大跨度不溢出、极小跨度不下溢。
+ * 返回 { sum, scale }：sum 为 2 倍“归一化有符号面积”，符号与真实面积一致；
+ * scale 为顶点最大跨度。空多边形或所有顶点重合（跨度为 0）时返回 null。
+ */
+function normalizedShoelace(poly) {
+  if (poly.length === 0) return null;
+  const ox = poly[0].x;
+  const oy = poly[0].y;
+  const rel = poly.map((p) => ({ x: p.x - ox, y: p.y - oy }));
+  let scale = 0;
+  for (const p of rel) scale = Math.max(scale, Math.abs(p.x), Math.abs(p.y));
+  if (!(scale > 0) || !Number.isFinite(scale)) return null;
+  let sum = 0;
+  for (let i = 0; i < rel.length; i++) {
+    const a = rel[i];
+    const b = rel[(i + 1) % rel.length];
+    sum += (a.x / scale) * (b.y / scale) - (b.x / scale) * (a.y / scale);
+  }
+  return { sum, scale };
+}
+
 export function polygonSignedArea(poly) {
-  let s = 0;
-  for (let i = 0; i < poly.length; i++) {
-    const a = poly[i];
-    const b = poly[(i + 1) % poly.length];
-    s += a.x * b.y - b.x * a.y;
-  }
-  if (Number.isFinite(s)) return s / 2;
-  // 坐标乘积溢出（坐标 ~1e307）：按最大坐标缩放后重新累加。此时真实面积
-  // 一般已超出 double 范围，返回值保持正确符号（通常为 ±Infinity），
-  // 调用方（ensureCCW、退化判断）只依赖符号或量级。
-  let m = 0;
-  for (const p of poly) m = Math.max(m, Math.abs(p.x), Math.abs(p.y));
-  if (!(m > 0) || !Number.isFinite(m)) return s / 2;
-  let scaled = 0;
-  for (let i = 0; i < poly.length; i++) {
-    const a = poly[i];
-    const b = poly[(i + 1) % poly.length];
-    scaled += (a.x / m) * (b.y / m) - (b.x / m) * (a.y / m);
-  }
-  return (scaled / 2) * m * m;
+  const r = normalizedShoelace(poly);
+  if (r === null) return 0;
+  // 还原真实面积：真实面积超出 double 范围时得到 ±Infinity、极小微观尺度下
+  // 下溢为 0，均为可表达的最佳逼近；符号始终与真实面积一致。
+  // 调用方（退化判断、定向）需要与量级无关的结果时应使用
+  // polygonNormalizedSignedArea。
+  return (r.sum / 2) * r.scale * r.scale;
+}
+
+/**
+ * 归一化有符号面积：有符号面积除以顶点最大跨度的平方，与坐标量级和平移无关
+ * （非退化多边形为 O(1) 量级，共线/重合时约为 0），符号与真实面积一致。
+ * 供退化判断（ensureCCW、凸包退化检查）使用。
+ */
+export function polygonNormalizedSignedArea(poly) {
+  const r = normalizedShoelace(poly);
+  return r === null ? 0 : r.sum / 2;
 }
 
 /**
  * 保证多边形为逆时针方向。
  */
 export function ensureCCW(poly) {
-  return polygonSignedArea(poly) < 0 ? poly.slice().reverse() : poly.slice();
+  return polygonNormalizedSignedArea(poly) < 0 ? poly.slice().reverse() : poly.slice();
 }
 
 /**

@@ -169,6 +169,53 @@ async function main() {
       `got=${huge.metrics?.minMargin}`
     );
     check('外方形裕量严格大于内方形约 9e306', huge.metrics?.minMargin > 9e306);
+
+    console.log('9) POST /api/fixture-plans 大幅平移坐标场景');
+    // 坐标以 1e307 为平移基准、局部跨度 1e292：四条导轨各有唯一候选点，
+    // 四点构成边长约 3.99e292 的方形，标称重心严格位于其中。
+    // 必须判定可行（回归：曾因面积计算被平移项抵消而误判为 hull_degenerate）。
+    const T = 1e307;
+    const halfSide = 2e292;
+    const halfBound = 4e292;
+    const shiftedResp = await fetch(`${BASE}/api/fixture-plans`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        rails: [
+          [{ x: T - halfSide, y: T - halfSide }],
+          [{ x: T + halfSide, y: T - halfSide }],
+          [{ x: T + halfSide, y: T + halfSide }],
+          [{ x: T - halfSide, y: T + halfSide }],
+        ],
+        boundary: [
+          { x: T - halfBound, y: T - halfBound }, { x: T + halfBound, y: T - halfBound },
+          { x: T + halfBound, y: T + halfBound }, { x: T - halfBound, y: T + halfBound },
+        ],
+        cg: { x: T, y: T },
+        toleranceX: 0,
+        toleranceY: 0,
+        minSpacing: 1,
+      }),
+    });
+    check('返回 200', shiftedResp.status === 200, `status=${shiftedResp.status}`);
+    const shifted = await shiftedResp.json();
+    check('feasible=true', shifted.feasible === true, `reason=${shifted.reason}`);
+    check(
+      '选择四条导轨各自唯一的候选编号 [1,1,1,1]',
+      JSON.stringify(shifted.selection?.map((s) => s.candidateNumber)) === '[1,1,1,1]',
+      `got=${JSON.stringify(shifted.selection?.map((s) => s.candidateNumber))}`
+    );
+    const nearHalfSide = (v) => Number.isFinite(v) && Math.abs(v - 2e292) <= 2e292 * 1e-2;
+    check(
+      '四个角点裕量均为有限正数且约为 2e292',
+      shifted.corners?.length === 4 && shifted.corners.every((c) => nearHalfSide(c.margin)),
+      `got=${JSON.stringify(shifted.corners?.map((c) => c.margin))}`
+    );
+    check(
+      'metrics.minMargin 为有限正数且约为 2e292',
+      nearHalfSide(shifted.metrics?.minMargin),
+      `got=${shifted.metrics?.minMargin}`
+    );
   } catch (err) {
     console.error(`冒烟执行异常：${err.stack || err.message}`);
     failures++;

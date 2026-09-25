@@ -16,7 +16,7 @@ import {
   pointDistance,
   polygonSignedDistance,
   distanceToSegment,
-  polygonSignedArea,
+  polygonNormalizedSignedArea,
 } from './geometry.js';
 
 const EPS = 1e-9;
@@ -105,6 +105,24 @@ function pairGap(points) {
 }
 
 /**
+ * 凸包顶点的最大跨度（平移不变），用于把绝对 EPS 换算成与当前组合尺度
+ * 相当的阈值：普通坐标下与 EPS 基本等价，超大/极小量级下仍保持相对意义。
+ */
+function hullSpan(hull) {
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const p of hull) {
+    minX = Math.min(minX, p.x);
+    maxX = Math.max(maxX, p.x);
+    minY = Math.min(minY, p.y);
+    maxY = Math.max(maxY, p.y);
+  }
+  return Math.max(maxX - minX, maxY - minY);
+}
+
+/**
  * 评估单个组合，返回约束状态与各项指标。
  * stage:
  *   boundary_failed -> spacing_failed -> hull_degenerate -> corners_failed -> feasible
@@ -146,8 +164,8 @@ function evaluate(indices, input, corners) {
   }
 
   const hull = ensureCCW(convexHull(points));
-  const area = polygonSignedArea(hull);
-  if (hull.length < 3 || area <= EPS) {
+  // 退化判断与坐标量级/平移无关：归一化面积 <= EPS 即视为共线或重合
+  if (hull.length < 3 || polygonNormalizedSignedArea(hull) <= EPS) {
     // 退化凸包：用角点到凸包点集/线段的最近距离量化“差多少”
     let worst = 0;
     for (const c of corners) {
@@ -176,7 +194,11 @@ function evaluate(indices, input, corners) {
   }));
   const minCornerMargin = Math.min(...cornerResults.map((c) => c.margin));
 
-  if (minCornerMargin <= EPS) {
+  // “严格在内”的阈值随凸包跨度缩放：角点有符号距离必须明显大于 0，
+  // 在超大或极小量级的坐标下仍保持相同的相对严格程度。
+  const span = hullSpan(hull);
+  const marginEps = Number.isFinite(span) && span > 0 ? EPS * span : EPS;
+  if (minCornerMargin <= marginEps) {
     return {
       status: 'corners_failed',
       stage: 3,
